@@ -371,29 +371,14 @@ TOTAL: 566,930,502
 
 ## Capturas
 
-### Cluster EMR activo
-![cluster](capturas/01_cluster_emr.png)
-
-### WordCount Gutenberg — Spark
-![wc_gutenberg](capturas/02_wordcount_gutenberg.png)
-
-### WordCount Wikipedia — comparativa
-![wc_wiki](capturas/03_wordcount_wikipedia_comparativa.png)
-
-### Índice invertido Gutenberg — Spark
-![ii_gutenberg](capturas/04_indice_invertido_gutenberg.png)
-
-### Índice invertido Wikipedia — comparativa
-![ii_wiki](capturas/05_indice_invertido_wikipedia_comparativa.png)
-
-### Yellow Taxi — consultas analíticas
+### Yellow Taxi consultas analíticas
 ![yellow](capturas/06_yellow_taxi_consultas.png)
 
-### Yellow Taxi — particionamiento
+### Yellow Taxi particionamiento
 ![yellow_part](capturas/07_yellow_taxi_particion.png)
 
-### FHVHV — consultas analíticas
+### FHVHV consultas analíticas
 ![fhvhv](capturas/08_fhvhv_consultas.png)
 
-### FHVHV — particionamiento
+### FHVHV particionamiento
 ![fhvhv_part](capturas/09_fhvhv_particion.png)
