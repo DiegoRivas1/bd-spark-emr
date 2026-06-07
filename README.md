@@ -26,6 +26,17 @@
 | NYC Yellow Taxi | ~1.7 GB | 104,770,192 viajes | 28 meses 2024-2026, particionado year/month |
 | NYC FHVHV (Uber/Lyft) | ~13 GB | 566,930,502 viajes | 28 meses 2024-2026, particionado year/month |
 
+### Preparacion del dataset de Gutenberg Prueba
+
+```bash
+mkdir input
+wget -O input/doc1.txt https://www.gutenberg.org/cache/epub/1342/pg1342.txt
+wget -O input/doc2.txt https://www.gutenberg.org/cache/epub/11/pg11.txt
+wget -O input/doc3.txt https://www.gutenberg.org/cache/epub/1661/pg1661.txt
+
+aws s3 cp input/ s3://lab03-indice-invertido/input/ --recursive
+```
+
 ### Preparación del dataset Wikipedia
 
 ```bash
@@ -81,8 +92,16 @@ s3://lab03-indice-invertido/
 aws s3 cp s3://lab03-indice-invertido/spark_scripts/ ~/ --recursive
 
 # Ejecutar
+#Archivos pequeños
 spark-submit wordcount.py
+spark-submit inverted_index.py
+
+#Archivos grandes
+#wordcount de spark
 spark-submit --driver-memory 4g --executor-memory 6g wiki_combined_large.py
+#indice invertido de spark
+time spark-submit --driver-memory 4g --executor-memory 6g inverted_spark.py
+#Anlisis
 spark-submit taxi_analysis.py
 spark-submit fhvhv_analysis.py
 ```
@@ -95,21 +114,9 @@ Ver [dev-environment-setup](https://github.com/DiegoRivas1/dev-environment-setup
 
 ### Gutenberg (~1.5 MB)
 
+Ejecutamos el script de WordCount:
 ```python
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import explode, split, lower, col, length
-
-spark = SparkSession.builder.appName("WordCount").getOrCreate()
-spark.sparkContext.setLogLevel("ERROR")
-
-df = spark.read.text("s3://lab03-indice-invertido/input/")
-
-words = df.select(
-    explode(split(lower(col("value")), "[^a-z]+")).alias("word")
-).filter((col("word") != "") & (length(col("word")) > 2))
-
-result = words.groupBy("word").count().orderBy("count", ascending=False)
-result.show(20)
+spark-submit wordcount.py
 ```
 
 **Tiempo: 14 seg**
@@ -118,10 +125,17 @@ result.show(20)
 
 **Spark:**
 ```bash
+#wordcount de spark
 time spark-submit --driver-memory 4g --executor-memory 6g wiki_combined_large.py
 ```
 
 **Hive:**
+
+Ingresamos a Hive CLI desde el master:
+```python
+hive
+```
+Y creamos la tabla externa apuntando a los archivos de Wikipedia y ejecutamos la consulta:
 ```sql
 CREATE EXTERNAL TABLE wiki_text (line STRING)
 STORED AS TEXTFILE
@@ -139,6 +153,13 @@ LIMIT 20;
 ```
 
 **MapReduce:**
+
+Borramos la salida anterior si existe:
+```bash
+hdfs dfs -rm -r /user/hadoop/wc_output
+```
+
+Ejecutamos en el master el streaming de Hadoop con los scripts mapper.py y reducer.py:
 ```bash
 time hadoop jar /usr/lib/hadoop-mapreduce/hadoop-streaming.jar \
   -files mapper.py,reducer.py \
@@ -169,49 +190,34 @@ time hadoop jar /usr/lib/hadoop-mapreduce/hadoop-streaming.jar \
 
 ---
 
-## Ejercicio 2 — Índice Invertido
+## Ejercicio 2 Índice Invertido
 
 ### Gutenberg (~1.5 MB)
 
+Ejecutamos el script de índice invertido:
 ```python
-from pyspark.sql.functions import explode, split, lower, col, length
-from pyspark.sql.functions import input_file_name, regexp_extract, collect_set
-
-df = spark.read.text("s3://lab03-indice-invertido/input/") \
-    .withColumn("filename", regexp_extract(input_file_name(), r"([^/]+)$", 1))
-
-words = df.select(
-    explode(split(lower(col("value")), "[^a-z]+")).alias("word"),
-    col("filename")
-).filter((col("word") != "") & (length(col("word")) > 2))
-
-result = words.groupBy("word") \
-    .agg(collect_set("filename").alias("documentos")) \
-    .orderBy("word")
-
-result.show(20, truncate=False)
+spark-submit inverted_index.py
 ```
 
 **Tiempo: 12 seg**
 
-### Wikipedia (~1.7 GB) — comparativa 3 tecnologías
+### Wikipedia (~1.7 GB) comparativa 3 tecnologías
 
 **Spark:**
+Ejecutamos:
 ```python
-df = spark.read.text("s3://lab03-indice-invertido/wiki_combined_large/") \
-    .withColumn("doc", input_file_name())
-
-index_df = df.select(
-    explode(split(lower(col("value")), "[^a-z]+")).alias("word"),
-    col("doc")
-).filter(col("word") != "") \
- .groupBy("word") \
- .agg(collect_set("doc").alias("documents"))
-
-index_df.show(20, truncate=False)
+time spark-submit --driver-memory 4g --executor-memory 6g inverted_spark.py
 ```
 
 **Hive:**
+
+Ingresamos a Hive CLI desde el master:
+```python
+hive
+```
+
+Ejecutamos la consulta para obtener el índice invertido:
+
 ```sql
 SELECT word, collect_set(INPUT__FILE__NAME) AS docs
 FROM wiki_text
@@ -222,6 +228,12 @@ LIMIT 20;
 ```
 
 **MapReduce:**
+Borramos la salida anterior si existe:
+```bash
+hdfs dfs -rm -r /user/hadoop/inverted_output
+```
+
+Ejecutamos el job:
 ```bash
 time hadoop jar /usr/lib/hadoop-mapreduce/hadoop-streaming.jar \
   -files mapper_inverted.py,reducer_inverted.py \
@@ -244,7 +256,7 @@ hdfs dfs -cat /user/hadoop/inverted_output/part-* | head -20
 
 ---
 
-## Ejercicio 3 — Análisis Comparativo Final
+## Ejercicio 3 Análisis Comparativo Final
 
 ### WordCount e Índice Invertido
 
@@ -266,7 +278,7 @@ hdfs dfs -cat /user/hadoop/inverted_output/part-* | head -20
 | SIN partición COUNT | 13 GB FHVHV | 0.51 seg | 114 seg | no aplica* |
 | CON partición COUNT | 1.9 GB (2026) | 0.34 seg | 30 seg | no aplica* |
 
-*MapReduce no aplica para análisis SQL — requeriría un mapper/reducer custom por cada consulta.
+*MapReduce no aplica para análisis SQL requeriría un mapper/reducer custom por cada consulta.
 
 ### Conclusiones
 
@@ -285,44 +297,56 @@ En Hive la mejora es de 15.57 seg a 5.28 seg (3x).
 
 ---
 
-## Ejercicio 4 — NYC Taxi con Spark
+## Ejercicio 4 NYC Taxi con Spark
 
 ### Yellow Taxi particionado (28 meses, 104M viajes)
 
+Ejecutamos el script de análisis:
 ```python
-df = spark.read.parquet("s3://lab03-indice-invertido/taxi_partitioned/")
+spark-submit taxi_analysis.py
+```
 
-# Total viajes por año
-df.groupBy("year").count().orderBy("year").show()
-
-# Horas pico 2025
-df.filter(col("year") == 2025) \
-  .withColumn("hora", hour(col("tpep_pickup_datetime"))) \
-  .groupBy("hora").count().orderBy(desc("count")).show(5)
+Ejecucion especifica:
+```python
+spark-submit taxi_analysis.py 2>/dev/null | grep -A2 "=== 6\|=== 7"
 ```
 
 **Resultados Yellow Taxi:**
 ```
-+----+--------+          +----+-------+
-|year|   count|          |hora|  count|
-+----+--------+          +----+-------+
-|2024|41169720|          |  18|3473210|
-|2025|48722602|          |  17|3291155|
-|2026|14877870|          |  19|3071607|
-+----+--------+          +----+-------+
+=== 1. Total viajes por año ===
++----+--------+
+|year|   count|
++----+--------+
+|2024|41169720|
+|2025|48722602|
+|2026|14877870|
++----+--------+
+
+=== 2. Promedio distancia por año ===
++----+----------------+
+|year| promedio_millas|
++----+----------------+
+|2024| 4.98           |
+|2025| 6.84           |
+|2026| 5.96           |
+
+........................
 ```
 
 ### FHVHV Uber/Lyft particionado (28 meses, 566M viajes)
 
+Ejecutamos el job:
 ```python
-df = spark.read.parquet("s3://lab03-indice-invertido/fhvhv_partitioned/")
-
-# Total viajes por año
-df.groupBy("year").count().orderBy("year").show()
+spark-submit fhvhv_analysis.py
+```
+ o
+```
+spark-submit fhvhv_analysis.py 2>/dev/null 
 ```
 
 **Resultados FHVHV:**
 ```
+=== 1. Total viajes por año ===
 +----+---------+
 |year|    count|
 +----+---------+
@@ -331,6 +355,16 @@ df.groupBy("year").count().orderBy("year").show()
 |2026| 83870370|
 TOTAL: 566,930,502
 +----+---------+
+
+=== 2. Promedio distancia y tiempo por año ===
++----+----------------+-----------------+
+|year| promedio_millas| promedio_minutos|
++----+----------------+-----------------+
+|2024| 5.08           | 20.13           |
+|2025| 5.03           | 19.87           |
+|2026| 4.74           | 19.24           |
+
+..................................
 ```
 
 ---
